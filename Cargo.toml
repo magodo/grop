@@ -9,3 +9,6 @@ edition = "2018"
 [dependencies]
 grok = "1.1"
 structopt = "0.3.13"
+
+[patch.crates-io]
+grok = { git = "https://github.com/magodo/grok", branch = "export_patterns"}
