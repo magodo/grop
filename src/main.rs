@@ -123,7 +123,9 @@ fn main() {
     for line in BufReader::new(input).lines() {
         if let Ok(l) = line {
             if let Some(m) = pattern.match_against(&l) {
-                // TODO: Output with order specified in expression
+                for x in m.iter() {
+                    println!("{:?}", x);
+                }
             }
         }
     }
