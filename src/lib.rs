@@ -17,6 +17,10 @@ pub struct Opt {
     #[structopt(parse(from_os_str))]
     input: Option<PathBuf>,
 
+    /// Output format (fields of grok expression, separated by comma)
+    #[structopt(short = "o", long)]
+    format: Option<String>,
+
     /// List available patterns
     #[structopt(short, long)]
     list_pattern: Option<Option<String>>,
@@ -78,7 +82,7 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
         None => pattern = grok.compile("%{GREEDYDATA:all}", true)?,
     }
 
-    output(opt.input, pattern)
+    output(&opt.input, pattern, &opt.format)
 }
 
 fn add_pattern(
@@ -123,7 +127,11 @@ fn list_pattern(
     }
 }
 
-fn output(path: Option<PathBuf>, pattern: Pattern) -> Result<(), Box<dyn Error>> {
+fn output(
+    path: &Option<PathBuf>,
+    pattern: Pattern,
+    format: &Option<String>,
+) -> Result<(), Box<dyn Error>> {
     let input: Box<dyn Read> = match path {
         Some(file) => Box::new(File::open(file)?),
         None => Box::new(io::stdin()),
@@ -131,17 +139,31 @@ fn output(path: Option<PathBuf>, pattern: Pattern) -> Result<(), Box<dyn Error>>
     for line in BufReader::new(input).lines() {
         if let Ok(l) = line {
             if let Some(m) = pattern.match_against(&l) {
-                println!("{}", format_output(m));
+                println!("{}", format_output(m, &format));
             }
         }
     }
     Ok(())
 }
 
-fn format_output(m: Matches) -> String {
+fn format_output(m: Matches, format: &Option<String>) -> String {
     let mut out = String::new();
-    for x in m.iter() {
-        out.push_str(format!("{} ", x.1).as_str());
+    match format {
+        Some(format) => {
+            for k in format.split(",") {
+                if let Some(v) = m.get(k) {
+                    out.push_str(format!("{} ", v).as_str());
+                }
+            }
+            out
+        }
+        None => {
+            for x in m.iter() {
+                if let Some(v) = m.get(x.0) {
+                    out.push_str(format!("{} ", v).as_str());
+                }
+            }
+            out
+        }
     }
-    out
 }
