@@ -78,8 +78,8 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
     // Compile pattern
     let pattern: Pattern;
     match opt.expression {
-        Some(expression) => pattern = grok.compile(&expression, true)?,
-        None => pattern = grok.compile("%{GREEDYDATA:all}", true)?,
+        Some(expression) => pattern = grok.compile(&expression, false)?,
+        None => pattern = grok.compile("%{GREEDYDATA:all}", false)?,
     }
 
     output(&opt.input, pattern, &opt.format)
