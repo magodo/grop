@@ -2,7 +2,7 @@ use grok::{patterns, Grok, Matches, Pattern};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
-use std::io::{self, prelude::*, BufReader};
+use std::io::{self, prelude::*, BufReader, BufWriter};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -18,8 +18,8 @@ pub struct Opt {
     input: Option<PathBuf>,
 
     /// Output format (fields of grok expression, separated by comma)
-    #[structopt(short = "o", long)]
-    format: Option<String>,
+    #[structopt(short, long)]
+    output_format: Option<String>,
 
     /// List available patterns
     #[structopt(short, long)]
@@ -71,7 +71,7 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
 
     // List pattern
     if let Some(target) = opt.list_pattern {
-        list_pattern(&pattern_map, target)?;
+        println!("{}", list_pattern(&pattern_map, target)?);
         return Ok(());
     }
 
@@ -82,17 +82,28 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
         None => pattern = grok.compile("%{GREEDYDATA:all}", false)?,
     }
 
-    output(&opt.input, pattern, &opt.format)
+    let input: Box<dyn Read> = match opt.input {
+        Some(file) => Box::new(File::open(file)?),
+        None => Box::new(io::stdin()),
+    };
+    let mut output = BufWriter::new(io::stdout());
+    for line in BufReader::new(input).lines() {
+        if let Ok(line) = line {
+            if let Some(line) = process(&line, &pattern, &opt.output_format) {
+                output.write(line.as_bytes())?;
+            }
+        }
+    }
+    output.flush()?;
+    Ok(())
 }
 
-fn add_pattern(
-    grok: &mut Grok,
-    m: &mut HashMap<String, String>,
-    p: &str,
-) -> Result<(), &'static str> {
+fn add_pattern(grok: &mut Grok, m: &mut HashMap<String, String>, p: &str) -> Result<(), String> {
     let pt = p.splitn(2, " ").collect::<Vec<&str>>();
     if pt.len() != 2 {
-        return Err(r#"Invalid pattern (should be "pattern_name regexp")"#);
+        return Err(String::from(
+            r#"Invalid pattern (should be "pattern_name regexp")"#,
+        ));
     }
     m.insert(String::from(pt[0]), String::from(pt[1]));
     grok.insert_definition(String::from(pt[0]), String::from(pt[1]));
@@ -102,12 +113,11 @@ fn add_pattern(
 fn list_pattern(
     pattern_map: &HashMap<String, String>,
     target_pattern: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     match target_pattern {
         Some(target) => match pattern_map.get(&target) {
             Some(v) => {
-                println!("{}", v);
-                return Ok(());
+                return Ok(String::from(v));
             }
             None => {
                 return Err(format!("Unknown pattern {}", &target));
@@ -119,51 +129,105 @@ fn list_pattern(
                 spatterns.push((item.0, item.1));
             }
             spatterns.sort_by(|a, b| a.0.cmp(b.0));
-            for pattern in spatterns.iter() {
-                println!("{}", pattern.0);
-            }
-            return Ok(());
+            Ok(spatterns
+                .iter()
+                .map(|(k, _)| String::from(*k))
+                .collect::<Vec<String>>()
+                .join("\n"))
         }
     }
 }
 
-fn output(
-    path: &Option<PathBuf>,
-    pattern: Pattern,
-    format: &Option<String>,
-) -> Result<(), Box<dyn Error>> {
-    let input: Box<dyn Read> = match path {
-        Some(file) => Box::new(File::open(file)?),
-        None => Box::new(io::stdin()),
-    };
-    for line in BufReader::new(input).lines() {
-        if let Ok(l) = line {
-            if let Some(m) = pattern.match_against(&l) {
-                println!("{}", format_output(m, &format));
-            }
-        }
+fn process(line: &str, pattern: &Pattern, oformat: &Option<String>) -> Option<String> {
+    if let Some(m) = pattern.match_against(line) {
+        return Some(format_output(&m, &oformat));
     }
-    Ok(())
+    None
 }
 
-fn format_output(m: Matches, format: &Option<String>) -> String {
-    let mut out = String::new();
+fn format_output(m: &Matches, format: &Option<String>) -> String {
     match format {
-        Some(format) => {
-            for k in format.split(",") {
-                if let Some(v) = m.get(k) {
-                    out.push_str(format!("{} ", v).as_str());
-                }
-            }
-            out
-        }
-        None => {
-            for x in m.iter() {
-                if let Some(v) = m.get(x.0) {
-                    out.push_str(format!("{} ", v).as_str());
-                }
-            }
-            out
-        }
+        Some(format) => format
+            .split(",")
+            .map(|k| {
+                String::from(
+                    m.get(k)
+                        .expect(&format!("unknown field in format string: {}", k)),
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(" "),
+        None => m
+            .iter()
+            .map(|x| String::from(x.0))
+            .collect::<Vec<String>>()
+            .join(" "),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_add_valid_pattern() {
+        let mut grok = Grok::default();
+        let mut pattern_map = HashMap::<String, String>::new();
+        add_pattern(&mut grok, &mut pattern_map, "FOO foo").expect("failed to add pattern");
+        assert_eq!(pattern_map.get("FOO").unwrap(), "foo");
+        let p = grok
+            .compile("%{FOO:foo}", true)
+            .expect("failed to compile pattern");
+        let m = p.match_against("foo").expect("failed to match pattern");
+        assert_eq!(m.get("foo").unwrap(), "foo");
+    }
+
+    #[test]
+    fn test_add_invalid_pattern() {
+        let mut grok = Grok::default();
+        let mut pattern_map = HashMap::<String, String>::new();
+        assert!(add_pattern(&mut grok, &mut pattern_map, "FOO,foo").is_err());
+    }
+
+    #[test]
+    fn test_list_pattern() {
+        let mut pattern_map = HashMap::<String, String>::new();
+        pattern_map.insert(String::from("FOO"), String::from("foo"));
+        pattern_map.insert(String::from("BAR"), String::from("bar"));
+        assert_eq!(list_pattern(&pattern_map, None).unwrap(), "BAR\nFOO");
+        assert_eq!(
+            list_pattern(&pattern_map, Some(String::from("FOO"))).unwrap(),
+            "foo"
+        );
+    }
+
+    #[test]
+    fn test_format_output() {
+        let mut grok = Grok::default();
+        let mut pattern_map = HashMap::<String, String>::new();
+        add_pattern(&mut grok, &mut pattern_map, "FOO foo").expect("failed to add pattern");
+        add_pattern(&mut grok, &mut pattern_map, "BAR bar").expect("failed to add pattern");
+        let p = grok
+            .compile("%{FOO:foo} %{BAR:bar}", true)
+            .expect("failed to compile pattern");
+        let m = p.match_against("foo bar").expect("failed to match pattern");
+        assert_eq!(format_output(&m, &Some(String::from("bar,foo"))), "bar foo");
+    }
+
+    #[test]
+    fn test_process() {
+        let mut grok = Grok::default();
+        let mut pattern_map = HashMap::<String, String>::new();
+        add_pattern(&mut grok, &mut pattern_map, "FOO foo").expect("failed to add pattern");
+        add_pattern(&mut grok, &mut pattern_map, "BAR bar").expect("failed to add pattern");
+        let p = grok
+            .compile("%{FOO:foo} %{BAR:bar}", true)
+            .expect("failed to compile pattern");
+        assert_eq!(
+            process("foo bar", &p, &Some(String::from("foo,bar"))).expect("no output from process"),
+            "foo bar"
+        );
+        assert!(process("bar", &p, &Some(String::from("foo,bar"))).is_none(),);
     }
 }
