@@ -37,6 +37,19 @@ pub struct Opt {
     #[structopt(long, parse(from_os_str))]
     pattern_file: Option<PathBuf>,
 
+    /// Merge specified field among rows by specifying starting pattern (format: `<field_name> <regexp>`)
+    /// The field to merge
+    #[structopt(long)]
+    merge_field: Option<String>,
+
+    /// Merge specified field among rows by specifying starting pattern (format: `<field_name> <regexp>`)
+    #[structopt(long)]
+    merge_pattern_start: Option<String>,
+
+    /// Merge specified field among rows by specifying ending pattern (format: `<field_name> <regexp>`)
+    #[structopt(long)]
+    merge_pattern_end: Option<String>,
+
     /// Silence all output
     #[structopt(short, long)]
     pub quiet: bool,
@@ -86,11 +99,57 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
         Some(file) => Box::new(File::open(file)?),
         None => Box::new(io::stdin()),
     };
+
     let mut output = BufWriter::new(io::stdout());
+
+    if opt.merge_field.is_none() {
+        process(input, Box::new(output), &pattern, &opt.output_format);
+    }
+    let mut in_scope = false;
+    let mut buffer_m = HashMap::<String, String>::new();
     for line in BufReader::new(input).lines() {
-        if let Ok(line) = line {
-            if let Some(line) = process(&line, &pattern, &opt.output_format) {
-                output.write(line.as_bytes())?;
+        match line {
+            Err(error) => return Err(Box::new(error)),
+            Ok(line) => {
+                if let Some(m) = process_line(&line, &pattern, &opt.output_format) {
+                    match opt.merge_field {
+                        Some(merge_field) => match opt.merge_pattern_start {
+                            Some(merge_pattern_start) => match opt.merge_pattern_end {
+                                Some(merge_pattern_end) => {}
+                                None => {
+                                    let match_start_pattern = match_merge_pattern(
+                                        &m,
+                                        &merge_field,
+                                        &merge_pattern_start,
+                                    )?;
+                                    if !in_scope {
+                                        if match_start_pattern {
+                                            buffer_m = m;
+                                        } else {
+                                            output.write(line.as_bytes())?;
+                                        }
+                                    } else {
+                                        if match_start_pattern {
+                                            output.write(
+                                                format_output(&buffer_m, &opt.output_format)
+                                                    .as_bytes(),
+                                            )?;
+                                            buffer_m = m;
+                                        } else {
+                                            append_match(&mut buffer_m, &m, &merge_field);
+                                        }
+                                    }
+                                }
+                            },
+                            None => {
+                                append_match(&mut buffer_m, &m, &merge_field);
+                            }
+                        },
+                        None => {
+                            output.write(line.as_bytes())?;
+                        }
+                    }
+                }
             }
         }
     }
@@ -98,15 +157,70 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn add_pattern(grok: &mut Grok, m: &mut HashMap<String, String>, p: &str) -> Result<(), String> {
+fn process(
+    input: Box<dyn Read>,
+    output: Box<dyn Write>,
+    pattern: &grok::Pattern,
+    output_format: &Option<String>,
+) -> Result<(), String> {
+    for line in BufReader::new(input).lines() {
+        match line {
+            Err(error) => return Err(error.to_string()),
+            Ok(line) => {
+                if let Some(_) = process_line(&line, &pattern, &output_format) {
+                    output.write(line.as_bytes());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_match(buf_m: &mut HashMap<String, String>, m: &HashMap<String, String>, field: &str) {
+    buf_m.insert(
+        String::from(field),
+        format!("{}\n{}", buf_m.get(field).unwrap(), m.get(field).unwrap()),
+    );
+}
+
+fn extract_pattern(p: &str) -> Result<(String, String), String> {
     let pt = p.splitn(2, " ").collect::<Vec<&str>>();
     if pt.len() != 2 {
         return Err(String::from(
             r#"Invalid pattern (should be "pattern_name regexp")"#,
         ));
     }
-    m.insert(String::from(pt[0]), String::from(pt[1]));
-    grok.insert_definition(String::from(pt[0]), String::from(pt[1]));
+    Ok((String::from(pt[0]), String::from(pt[1])))
+}
+
+fn match_merge_pattern(
+    m: &HashMap<String, String>,
+    merge_field: &str,
+    merge_pattern: &str,
+) -> Result<bool, String> {
+    match m.get(merge_field) {
+        Some(payload) => {
+            let p = Grok::default().compile(&merge_pattern, false);
+            if let Err(err) = p {
+                return Err(err.to_string());
+            }
+            let p = p.unwrap();
+            let m = p.match_against(payload);
+            if m.is_none() {
+                return Ok(false);
+            }
+            Ok(true)
+        }
+        None => {
+            return Err(format!("unknown filed: {}", merge_field));
+        }
+    }
+}
+
+fn add_pattern(grok: &mut Grok, m: &mut HashMap<String, String>, p: &str) -> Result<(), String> {
+    let (field_name, field_pattern) = extract_pattern(p)?;
+    m.insert(String::from(&field_name), String::from(&field_pattern));
+    grok.insert_definition(String::from(&field_name), String::from(&field_pattern));
     Ok(())
 }
 
@@ -138,14 +252,23 @@ fn list_pattern(
     }
 }
 
-fn process(line: &str, pattern: &Pattern, oformat: &Option<String>) -> Option<String> {
+fn process_line(
+    line: &str,
+    pattern: &Pattern,
+    oformat: &Option<String>,
+) -> Option<HashMap<String, String>> {
     if let Some(m) = pattern.match_against(line) {
-        return Some(format_output(&m, &oformat));
+        // Convert Match to Map so that we can mutate the content for merging
+        let mmap = m
+            .iter()
+            .map(|(k, v)| (String::from(k), String::from(v)))
+            .collect::<HashMap<String, String>>();
+        return Some(mmap);
     }
     None
 }
 
-fn format_output(m: &Matches, format: &Option<String>) -> String {
+fn format_output(m: &HashMap<String, String>, format: &Option<String>) -> String {
     match format {
         Some(format) => format
             .split(",")
@@ -216,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process() {
+    fn test_process_line() {
         let mut grok = Grok::default();
         let mut pattern_map = HashMap::<String, String>::new();
         add_pattern(&mut grok, &mut pattern_map, "FOO foo").expect("failed to add pattern");
@@ -225,9 +348,10 @@ mod tests {
             .compile("%{FOO:foo} %{BAR:bar}", true)
             .expect("failed to compile pattern");
         assert_eq!(
-            process("foo bar", &p, &Some(String::from("foo,bar"))).expect("no output from process"),
+            process_line("foo bar", &p, &Some(String::from("foo,bar")))
+                .expect("no output from process_line"),
             "foo bar"
         );
-        assert!(process("bar", &p, &Some(String::from("foo,bar"))).is_none(),);
+        assert!(process_line("bar", &p, &Some(String::from("foo,bar"))).is_none(),);
     }
 }
