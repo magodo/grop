@@ -58,9 +58,8 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
     // Read customized patterns (if any)
     if let Some(custom_pattern_file) = opt.pattern_file {
         for line in BufReader::new(File::open(custom_pattern_file)?).lines() {
-            if let Ok(p) = line {
-                add_pattern(&mut grok, &mut pattern_map, &p)?;
-            }
+            let line = line?;
+            add_pattern(&mut grok, &mut pattern_map, &line)?;
         }
     }
     if let Some(custom_patterns) = opt.pattern {
@@ -88,10 +87,9 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
     };
     let mut output = BufWriter::new(io::stdout());
     for line in BufReader::new(input).lines() {
-        if let Ok(line) = line {
-            if let Some(line) = process(&line, &pattern, &opt.output_format) {
-                output.write(line.as_bytes())?;
-            }
+        let line = line?;
+        if let Some(line) = process(&line, &pattern, &opt.output_format) {
+            output.write(line.as_bytes())?;
         }
     }
     output.flush()?;
@@ -139,10 +137,9 @@ fn list_pattern(
 }
 
 fn process(line: &str, pattern: &Pattern, oformat: &Option<String>) -> Option<String> {
-    if let Some(m) = pattern.match_against(line) {
-        return Some(format_output(&m, &oformat));
-    }
-    None
+    pattern
+        .match_against(line)
+        .and_then(|m| Some(format_output(&m, &oformat)))
 }
 
 fn format_output(m: &Matches, format: &Option<String>) -> String {
