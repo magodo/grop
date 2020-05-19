@@ -1,4 +1,5 @@
 use grok::{patterns, Grok, Matches, Pattern};
+use log;
 use std::collections::HashMap;
 use std::error;
 use std::error::Error;
@@ -90,6 +91,10 @@ pub struct Opt {
     #[structopt(long, requires_all=&["merge-exp-start", "merge-field"])]
     merge_exp_end: Option<String>,
 
+    /// Whether to take the line matching `merge_exp_end` as part of the merged section
+    #[structopt(long)]
+    merge_scope_exclusive: bool,
+
     /// Silence all output
     #[structopt(short, long)]
     pub quiet: bool,
@@ -167,6 +172,7 @@ pub fn run(opt: Opt) -> Result<(), GropError> {
             &merge_field,
             &merge_exp_start,
             &merge_exp_end,
+            opt.merge_scope_exclusive,
             &mut grok,
         ),
         _ => Err(GropError::InvalidArg(format!(
@@ -204,6 +210,7 @@ fn process_merge(
     merge_field: &Vec<String>,
     merge_exp_start: &str,
     merge_exp_end: &str,
+    merge_scope_exclusive: bool,
     grok: &mut Grok,
 ) -> Result<(), GropError> {
     let mut in_scope = false;
@@ -219,6 +226,7 @@ fn process_merge(
                 p_end.match_against(&line),
             ) {
                 (false, None, _) => {
+                    log::info!("process merge: regular line: {}", line);
                     output.write(
                         format!(
                             "{}\n",
@@ -228,17 +236,32 @@ fn process_merge(
                     )?;
                 }
                 (false, Some(_), _) => {
+                    log::info!("process merge: entering merge scope: {}", line);
                     in_scope = true;
                     buf = MatchWrapper::from(m).into();
                 }
                 (true, _, None) => {
+                    log::info!("process merge: in scope: {}", line);
                     merge_match_to_buf(&merge_field, &m, &mut buf)?;
                 }
                 (true, _, Some(_)) => {
-                    merge_match_to_buf(&merge_field, &m, &mut buf)?;
-                    output.write(format!("{}\n", format_output(&buf, &oformat)).as_bytes())?;
-                    in_scope = false;
+                    if merge_scope_exclusive {
+                        log::info!("process merge: entering merge scope (exclusive): {}", line);
+                        output.write(format!("{}\n", format_output(&buf, &oformat)).as_bytes())?;
+                        output.write(
+                            format!(
+                                "{}\n",
+                                format_output(&MatchWrapper::from(m).into(), &oformat)
+                            )
+                            .as_bytes(),
+                        )?;
+                    } else {
+                        log::info!("process merge: entering merge scope (inclusive): {}", line);
+                        merge_match_to_buf(&merge_field, &m, &mut buf)?;
+                        output.write(format!("{}\n", format_output(&buf, &oformat)).as_bytes())?;
+                    }
                     buf.clear();
+                    in_scope = false;
                 }
             }
         }
@@ -429,7 +452,7 @@ bar
     }
 
     #[test]
-    fn test_process_merge() {
+    fn test_process_merge_inclusive() {
         let mut grok = Grok::default();
         let mut pattern_map = HashMap::<String, String>::new();
         add_pattern(&mut grok, &mut pattern_map, "PREFIX =").expect("failed to add pattern");
@@ -454,8 +477,9 @@ bar
             &p,
             &Some(String::from("prefix,greedydata")),
             &vec![String::from("greedydata")],
-            "%{PREFIX} START %{GREEDYDATA}",
-            "%{PREFIX} END %{GREEDYDATA}",
+            "%{PREFIX} START",
+            "%{PREFIX} END",
+            false,
             &mut grok,
         )
         .expect("failed to process");
@@ -467,6 +491,51 @@ bar
 3
 END 4
 = 5
+"#
+            .as_bytes()
+        );
+    }
+
+    #[test]
+    fn test_process_merge_exclusive() {
+        let mut grok = Grok::default();
+        let mut pattern_map = HashMap::<String, String>::new();
+        add_pattern(&mut grok, &mut pattern_map, "PREFIX =").expect("failed to add pattern");
+        let p = grok
+            .compile("%{PREFIX:prefix} %{GREEDYDATA:greedydata}", true)
+            .expect("failed to compile pattern");
+
+        let input = Cursor::new(
+            r#"
+= 1
+= REQUEST
+= 2
+= RESPONSE
+= 3
+            "#
+            .as_bytes(),
+        );
+        let mut output = Cursor::new(Vec::new());
+        process_merge(
+            Box::new(input),
+            &mut output,
+            &p,
+            &Some(String::from("prefix,greedydata")),
+            &vec![String::from("greedydata")],
+            "%{PREFIX} REQUEST",
+            "%{PREFIX} RESPONSE",
+            true,
+            &mut grok,
+        )
+        .expect("failed to process");
+        println!("{:?}", std::str::from_utf8(output.get_ref()));
+        assert_eq!(
+            &output.get_ref()[..],
+            r#"= 1
+= REQUEST
+2
+= RESPONSE
+= 3
 "#
             .as_bytes()
         );
