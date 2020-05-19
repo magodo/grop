@@ -79,7 +79,7 @@ pub struct Opt {
 
     /// Field(s) to be merged among lines.
     /// The unspecified fields will be skipped and only keep the ones in first line.
-    #[structopt(long, requires_all=&["merge-exp-start", "merge-exp-end"])]
+    #[structopt(short, long, requires_all=&["merge-exp-start", "merge-exp-end"])]
     merge_field: Option<Vec<String>>,
 
     /// Grok match expression indicating the start of the merged section
