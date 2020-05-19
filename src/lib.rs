@@ -244,24 +244,37 @@ fn process_merge(
                     log::info!("process merge: in scope: {}", line);
                     merge_match_to_buf(&merge_field, &m, &mut buf)?;
                 }
-                (true, _, Some(_)) => {
+                (true, match_start, Some(_)) => {
                     if merge_scope_exclusive {
                         log::info!("process merge: entering merge scope (exclusive): {}", line);
                         output.write(format!("{}\n", format_output(&buf, &oformat)).as_bytes())?;
-                        output.write(
-                            format!(
-                                "{}\n",
-                                format_output(&MatchWrapper::from(m).into(), &oformat)
-                            )
-                            .as_bytes(),
-                        )?;
+                        buf.clear();
+
+                        // In case the end expression is exclusive, we need further check if it
+                        // match the start expression. If so, we will launch a new merge section
+                        // right away.
+                        if let Some(_) = match_start {
+                            buf = MatchWrapper::from(m).into();
+                            in_scope = true;
+                        } else {
+                            // Not match start expression, just output current line and clear
+                            // buffer and state.
+                            output.write(
+                                format!(
+                                    "{}\n",
+                                    format_output(&MatchWrapper::from(m).into(), &oformat)
+                                )
+                                .as_bytes(),
+                            )?;
+                            in_scope = false;
+                        }
                     } else {
                         log::info!("process merge: entering merge scope (inclusive): {}", line);
                         merge_match_to_buf(&merge_field, &m, &mut buf)?;
                         output.write(format!("{}\n", format_output(&buf, &oformat)).as_bytes())?;
+                        buf.clear();
+                        in_scope = false;
                     }
-                    buf.clear();
-                    in_scope = false;
                 }
             }
         }
@@ -536,6 +549,53 @@ END 4
 2
 = RESPONSE
 = 3
+"#
+            .as_bytes()
+        );
+    }
+
+    #[test]
+    fn test_process_merge_exclusive_continue() {
+        let mut grok = Grok::default();
+        let mut pattern_map = HashMap::<String, String>::new();
+        add_pattern(&mut grok, &mut pattern_map, "PREFIX =").expect("failed to add pattern");
+        let p = grok
+            .compile("%{PREFIX:prefix} %{GREEDYDATA:greedydata}", true)
+            .expect("failed to compile pattern");
+
+        let input = Cursor::new(
+            r#"
+= DEBUG 1
+= DEBUG REQUEST
+= 2
+= DEBUG RESPONSE
+= 3
+= DEBUG 4
+            "#
+            .as_bytes(),
+        );
+        let mut output = Cursor::new(Vec::new());
+        process_merge(
+            Box::new(input),
+            &mut output,
+            &p,
+            &Some(String::from("prefix,greedydata")),
+            &vec![String::from("greedydata")],
+            "%{PREFIX} DEBUG REQUEST|RESPONSE",
+            "%{PREFIX} DEBUG",
+            true,
+            &mut grok,
+        )
+        .expect("failed to process");
+        println!("{:?}", std::str::from_utf8(output.get_ref()));
+        assert_eq!(
+            &output.get_ref()[..],
+            r#"= DEBUG 1
+= DEBUG REQUEST
+2
+= DEBUG RESPONSE
+3
+= DEBUG 4
 "#
             .as_bytes()
         );
