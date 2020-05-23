@@ -2,6 +2,12 @@
 
 Grop is a `grok` powered `grep`-like CLI utility, that allows user to manipulate `grok` separated columns in different ways (E.g. filter rows with columns).
 
+## Install
+
+```bash
+cargo install grop
+```
+
 ## Usage
 
 ```bash
@@ -54,14 +60,14 @@ Following is an example snippet showing how to filter aways some uninteresting l
 
 ```bash
 $ TF_LOG=DEBUG terraform plan 2>&1 | tee /tmp/tf.log | \
-    cargo run -- -p "LOGLEVEL DEBUG|INFO|WARN|ERROR" \
-                 -p "PROVIDER_SUBJECT plugin.terraform-provider-azurerm" \
-                 -e "%{TIMESTAMP_ISO8601:ts} \[%{LOGLEVEL:lvl}\] %{PROVIDER_SUBJECT}: %{GREEDYDATA:data}" \
-                 -m data \
-                 --merge-exp-start=".* AzureRM Request|Response" \
-                 --merge-exp-end="%{TIMESTAMP_ISO8601:ts} \[%{LOGLEVEL:lvl}\] %{PROVIDER_SUBJECT}: \[DEBUG\]" \
-                 --merge-scope-exclusive \
-                 --filter="-data \[DEBUG\] AzureRM Client User Agent" \
-                 --filter="-data \[DEBUG\] Registering" \
-                 -o ts,data
+    grop -p "LOGLEVEL DEBUG|INFO|WARN|ERROR" \
+         -p "PROVIDER_SUBJECT plugin.terraform-provider-azurerm" \
+         -e "%{TIMESTAMP_ISO8601:ts} \[%{LOGLEVEL:lvl}\] %{PROVIDER_SUBJECT}: %{GREEDYDATA:data}" \
+         -m data \
+         --merge-exp-start=".* AzureRM Request|Response" \
+         --merge-exp-end="%{TIMESTAMP_ISO8601:ts} \[%{LOGLEVEL:lvl}\] %{PROVIDER_SUBJECT}: \[DEBUG\]" \
+         --merge-scope-exclusive \
+         --filter="-data \[DEBUG\] AzureRM Client User Agent" \
+         --filter="-data \[DEBUG\] Registering" \
+         -o ts,data
 ```
