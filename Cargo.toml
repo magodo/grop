@@ -16,6 +16,4 @@ grok = "1.1"
 structopt = "0.3.13"
 log = "0.4"
 stderrlog = "0.4"
-
-[patch.crates-io]
-grok = { git = "https://github.com/magodo/grok", branch = "export_patterns"}
+fgrok = "1.1.0"

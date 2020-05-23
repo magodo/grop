@@ -1,4 +1,4 @@
-use grok::{patterns, Grok, Matches, Pattern};
+use fgrok::{patterns, Grok, Matches, Pattern};
 use log;
 use std::char;
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use structopt::StructOpt;
 #[derive(Debug)]
 pub enum GropError {
     Io(io::Error),
-    Compile(grok::Error),
+    Compile(fgrok::Error),
     InvalidArg(String),
 }
 
@@ -42,8 +42,8 @@ impl From<io::Error> for GropError {
         GropError::Io(err)
     }
 }
-impl From<grok::Error> for GropError {
-    fn from(err: grok::Error) -> GropError {
+impl From<fgrok::Error> for GropError {
+    fn from(err: fgrok::Error) -> GropError {
         GropError::Compile(err)
     }
 }
