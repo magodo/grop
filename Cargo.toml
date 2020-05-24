@@ -1,6 +1,6 @@
 [package]
 name = "grop"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["magodo <wztdyl@sina.com>"]
 edition = "2018"
 description = "Grop is a `grok` powered `grep`-like CLI utility, that allows user to manipulate `grok` separated columns in different ways"
