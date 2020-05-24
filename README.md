@@ -17,7 +17,6 @@ USAGE:
     grop [FLAGS] [OPTIONS] [--] [input]
 
 FLAGS:
-    -d, --debug                    Activate debug mode
     -h, --help                     Prints help information
         --merge-scope-exclusive    Whether to take the line matching `merge_exp_end` as part of the merged section
     -q, --quiet                    Silence all output
@@ -25,6 +24,8 @@ FLAGS:
     -v, --verbose                  Verbose mode (-v, -vv, -vvv, etc)
 
 OPTIONS:
+        --config <config-file>                 Config file in toml format. A sample file could be found at
+                                               "doc/sample.toml"
     -e, --expression <expression>              Grok match expression
         --filter <filter>...                   Filter to include (`field_name pattern`) or exclude (`-field_name
                                                pattern`) some pattern
@@ -35,7 +36,6 @@ OPTIONS:
                                                and only keep the ones in first line
     -o, --output-format <output-format>        Output format (fields of grok expression, separated by comma)
     -p, --pattern <pattern>...                 Custom Grok pattern (format: `<pattern_name> <regexp>`)
-        --pattern-file <pattern-file>          Custom Grok pattern file
 
 ARGS:
     <input>    Input file, stdin if not present

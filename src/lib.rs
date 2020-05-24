@@ -1,5 +1,6 @@
 use fgrok::{patterns, Grok, Matches, Pattern};
 use log;
+use serde::Deserialize;
 use std::char;
 use std::collections::HashMap;
 use std::error;
@@ -8,7 +9,82 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, prelude::*, BufReader};
 use std::path::PathBuf;
-use structopt::StructOpt;
+
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    #[serde(skip)]
+    pub input: Option<PathBuf>,
+    pub custom_patterns: Option<Vec<String>>,
+    #[serde(skip)]
+    pub list_pattern: Option<Option<String>>,
+    pub match_expression: Option<String>,
+    pub filters: Option<Vec<String>>,
+    pub output_format: Option<String>,
+    pub merge_config: Option<MergeConfig>,
+}
+
+impl Config {
+    pub fn merge(self, config: Config) -> Config {
+        Config {
+            input: match config.input {
+                Some(v) => Some(v),
+                None => self.input,
+            },
+            custom_patterns: match config.custom_patterns {
+                Some(v) => Some(v),
+                None => self.custom_patterns,
+            },
+            list_pattern: match config.list_pattern {
+                Some(v) => Some(v),
+                None => self.list_pattern,
+            },
+            match_expression: match config.match_expression {
+                Some(v) => Some(v),
+                None => self.match_expression,
+            },
+            filters: match config.filters {
+                Some(v) => Some(v),
+                None => self.filters,
+            },
+            output_format: match config.output_format {
+                Some(v) => Some(v),
+                None => self.output_format,
+            },
+            merge_config: match config.merge_config {
+                Some(v) => Some(v),
+                None => self.merge_config,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MergeConfig {
+    pub merge_fields: Option<Vec<String>>,
+    pub merge_exp_start: Option<String>,
+    pub merge_exp_end: Option<String>,
+    pub merge_scope_exclusive: bool,
+}
+
+impl MergeConfig {
+    pub fn merge(self, config: MergeConfig) -> MergeConfig {
+        MergeConfig {
+            merge_fields: match config.merge_fields {
+                Some(v) => Some(v),
+                None => self.merge_fields,
+            },
+            merge_exp_start: match config.merge_exp_start {
+                Some(v) => Some(v),
+                None => self.merge_exp_start,
+            },
+            merge_exp_end: match config.merge_exp_end {
+                Some(v) => Some(v),
+                None => self.merge_exp_end,
+            },
+            merge_scope_exclusive: config.merge_scope_exclusive,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum GropError {
@@ -48,67 +124,6 @@ impl From<fgrok::Error> for GropError {
     }
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "grop", about = "A grok powered grep-like utility")]
-pub struct Opt {
-    /// Activate debug mode
-    #[structopt(short, long)]
-    debug: bool,
-
-    /// Input file, stdin if not present
-    #[structopt(parse(from_os_str))]
-    input: Option<PathBuf>,
-
-    /// Output format (fields of grok expression, separated by comma)
-    #[structopt(short, long)]
-    output_format: Option<String>,
-
-    /// List available patterns
-    #[structopt(short, long)]
-    list_pattern: Option<Option<String>>,
-
-    /// Grok match expression
-    #[structopt(short, long)]
-    expression: Option<String>,
-
-    /// Custom Grok pattern (format: `<pattern_name> <regexp>`)
-    #[structopt(short, long)]
-    pattern: Option<Vec<String>>,
-
-    /// Custom Grok pattern file
-    #[structopt(long, parse(from_os_str))]
-    pattern_file: Option<PathBuf>,
-
-    /// Filter to include (`field_name pattern`) or exclude (`-field_name pattern`) some pattern
-    #[structopt(long)]
-    filter: Option<Vec<String>>,
-
-    /// Field(s) to be merged among lines.
-    /// The unspecified fields will be skipped and only keep the ones in first line.
-    #[structopt(short, long, requires_all=&["merge-exp-start", "merge-exp-end"])]
-    merge_field: Option<Vec<String>>,
-
-    /// Grok match expression indicating the start of the merged section
-    #[structopt(long, requires_all=&["merge-exp-end", "merge-field"])]
-    merge_exp_start: Option<String>,
-
-    /// Grok match expression indicating the end of the merged section
-    #[structopt(long, requires_all=&["merge-exp-start", "merge-field"])]
-    merge_exp_end: Option<String>,
-
-    /// Whether to take the line matching `merge_exp_end` as part of the merged section
-    #[structopt(long)]
-    merge_scope_exclusive: bool,
-
-    /// Silence all output
-    #[structopt(short, long)]
-    pub quiet: bool,
-
-    /// Verbose mode (-v, -vv, -vvv, etc)
-    #[structopt(short, long, parse(from_occurrences))]
-    pub verbose: usize,
-}
-
 struct MatchWrapper<'a>(Matches<'a>);
 
 impl<'a> From<Matches<'a>> for MatchWrapper<'a> {
@@ -126,7 +141,7 @@ impl<'a> Into<HashMap<String, String>> for MatchWrapper<'a> {
     }
 }
 
-pub fn run(opt: Opt) -> Result<(), GropError> {
+pub fn run(config: Config) -> Result<(), GropError> {
     let mut grok = Grok::default();
 
     let mut pattern_map: HashMap<String, String> = patterns()
@@ -136,49 +151,48 @@ pub fn run(opt: Opt) -> Result<(), GropError> {
         .collect();
 
     // Read customized patterns (if any)
-    if let Some(custom_pattern_file) = opt.pattern_file {
-        for line in BufReader::new(File::open(custom_pattern_file)?).lines() {
-            let line = line?;
-            add_pattern(&mut grok, &mut pattern_map, &line)?;
-        }
-    }
-    if let Some(custom_patterns) = opt.pattern {
+    if let Some(custom_patterns) = config.custom_patterns {
         for p in custom_patterns.iter() {
             add_pattern(&mut grok, &mut pattern_map, p)?;
         }
     }
 
     // List pattern
-    if let Some(target) = opt.list_pattern {
+    if let Some(target) = config.list_pattern {
         println!("{}", list_pattern(&pattern_map, target)?);
         return Ok(());
     }
 
-    let input: Box<dyn Read> = match opt.input {
+    let input: Box<dyn Read> = match config.input {
         Some(file) => Box::new(File::open(file)?),
         None => Box::new(io::stdin()),
     };
     let mut output = io::stdout();
 
-    match (&opt.merge_field, &opt.merge_exp_start, &opt.merge_exp_end) {
-        (None, None, None) => process(
+    match config.merge_config {
+        None => process(
             input,
             &mut output,
-            &opt.expression,
-            &opt.output_format,
-            &opt.filter,
+            &config.match_expression,
+            &config.output_format,
+            &config.filters,
             &mut grok,
         ),
-        (Some(merge_field), Some(merge_exp_start), Some(merge_exp_end)) => process_merge(
+        Some(MergeConfig {
+            merge_fields: Some(merge_fields),
+            merge_exp_start: Some(merge_exp_start),
+            merge_exp_end: Some(merge_exp_end),
+            merge_scope_exclusive,
+        }) => process_merge(
             input,
             &mut output,
-            &opt.expression,
-            &opt.output_format,
-            &merge_field,
+            &config.match_expression,
+            &config.output_format,
+            &merge_fields,
             &merge_exp_start,
             &merge_exp_end,
-            opt.merge_scope_exclusive,
-            &opt.filter,
+            merge_scope_exclusive,
+            &config.filters,
             &mut grok,
         ),
         _ => Err(GropError::InvalidArg(format!(

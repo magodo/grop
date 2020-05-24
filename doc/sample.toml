@@ -1,0 +1,33 @@
+# Sample config file
+
+# Custom grok patterns in format "pattern_name grok_pattern"
+#custom_patterns = []
+
+# Grok expression to match and structure line
+# match_expression = ''
+
+# Fieldwise filters allows:
+#
+# - blacklist output in format "-field_name grok_pattern"
+# - whitelist output in format "field_name grok_pattern"
+# filters = []
+
+# Fields to output, separated by comma
+# output_format = ''
+
+#######################
+# Merge related config
+#######################
+#[merge_config]
+
+# Field(s) to be merged among lines. The unspecified fields will be skipped and only keep the ones in first line.
+#merge_fields = []
+
+# Grok match expression indicating the start of the merged section.
+#merge_exp_start = ''
+
+# Grok match expression indicating the end of the merged section
+#merge_exp_end = ''
+
+# Whether to take the line matching `merge_exp_end` as part of the merged section
+#merge_scope_exclusive = true

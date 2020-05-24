@@ -8,6 +8,7 @@ license = "MIT"
 homepage = "https://github.com/magodo/grop"
 repository = "https://github.com/magodo/grop"
 documentation = "https://docs.rs/grop"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -17,3 +18,5 @@ structopt = "0.3.13"
 log = "0.4"
 stderrlog = "0.4"
 fgrok = "1.1.0"
+toml = "0.5.6"
+serde = { version = "1.0.110", features = ["derive"] }
