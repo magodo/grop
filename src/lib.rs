@@ -278,7 +278,7 @@ fn process_merge(
                 }
                 (true, match_start, Some(_)) => {
                     if merge_scope_exclusive {
-                        log::info!("process merge: entering merge scope (exclusive): {}", line);
+                        log::info!("process merge: leaving merge scope (exclusive): {}", line);
 
                         if let Some(output_line) =
                             format_output(&buf, &oformat, &filter, &mut grok)?
@@ -292,6 +292,7 @@ fn process_merge(
                         // right away.
                         if let Some(_) = match_start {
                             buf = MatchWrapper::from(m).into();
+                            log::info!("process merge: still in merge scope as ending line match start pattern");
                             in_scope = true;
                         } else {
                             // Not match start expression, just output current line and clear
@@ -307,7 +308,7 @@ fn process_merge(
                             in_scope = false;
                         }
                     } else {
-                        log::info!("process merge: entering merge scope (inclusive): {}", line);
+                        log::info!("process merge: leaving merge scope (inclusive): {}", line);
                         merge_match_to_buf(&merge_field, &m, &mut buf)?;
 
                         if let Some(output_line) =
@@ -429,12 +430,6 @@ fn format_output(
                 )));
             }
             let (name, pattern) = (ft[0], ft[1]);
-            log::info!(
-                "name: {}, pattern: {}, negative: {}",
-                name,
-                pattern,
-                is_negative
-            );
             let field_payload = m.get(name).expect(&format!("unknown field: {}", name));
             if is_negative {
                 if grok
@@ -453,7 +448,13 @@ fn format_output(
                     to_keep = true;
                 }
             }
-            log::info!("to_keep: {}", to_keep);
+            log::info!(
+                "format_output: name: {}, pattern: {}, to_keep: {}, content: {}",
+                name,
+                pattern,
+                to_keep,
+                field_payload,
+            );
         }
         if !to_keep {
             return Ok(None);
@@ -674,6 +675,54 @@ END 4
 2
 = RESPONSE
 = 3
+"#
+            .as_bytes()
+        );
+    }
+
+    #[test]
+    fn test_process_merge_exclusive_mono_pattern() {
+        let mut grok = Grok::default();
+        let exp = String::from("%{GREEDYDATA:greedydata}");
+
+        let input = Cursor::new(
+            r#"
+= REQUEST
+1
+= RESPONSE
+2
+= REQUEST
+3
+= RESPONSE
+4
+= Other Log
+"#
+            .as_bytes(),
+        );
+        let mut output = Cursor::new(Vec::new());
+        process_merge(
+            Box::new(input),
+            &mut output,
+            &Some(exp),
+            &Some(String::from("greedydata")),
+            &vec![String::from("greedydata")],
+            "= REQUEST|RESPONSE",
+            "= ",
+            true,
+            &Some(vec![String::from("-greedydata REQUEST")]),
+            &mut grok,
+        )
+        .expect("failed to process");
+
+        log::info!("{:?}", std::str::from_utf8(output.get_ref()));
+        assert_eq!(
+            &output.get_ref()[..],
+            r#"
+= RESPONSE
+2
+= RESPONSE
+4
+= Other Log
 "#
             .as_bytes()
         );
